@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Maestro de la Composición</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700;900&display=swap');
+        
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            overflow-x: hidden;
+            overscroll-behavior: none; /* Vital para móviles */
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .game-board {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #1e293b;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            touch-action: none; /* Bloquea el scroll nativo dentro del tablero */
+        }
+
+        /* SISTEMA DE ARRASTRE BLINDADO */
+        .draggable {
+            position: absolute;
+            cursor: grab;
+            z-index: 30;
+            /* Asegura un hitbox real para los toques */
+            background-color: rgba(0, 0, 0, 0.001); 
+            transition: filter 0.2s;
+            touch-action: none;
+        }
+
+        .draggable.dragging {
+            cursor: grabbing;
+            z-index: 100 !important;
+            filter: drop-shadow(0 20px 25px rgba(0,0,0,0.7)) brightness(1.2) scale(1.05);
+        }
+
+        /* Obliga a que los clicks ignoren el SVG y vayan al div contenedor (.draggable) */
+        .draggable svg {
+            pointer-events: none !important; 
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* GRID PARA NIVEL 1 */
+        .thirds-grid {
+            position: absolute; inset: 0; display: grid;
+            grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr;
+            pointer-events: none; z-index: 20;
+        }
+        .thirds-grid div {
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .thirds-grid div:nth-child(3n) { border-right: none; }
+        .thirds-grid div:nth-child(n+7) { border-bottom: none; }
+
+        .intersection-point {
+            position: absolute; width: 40px; height: 40px;
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%; transform: translate(-50%, -50%);
+            pointer-events: none; transition: all 0.2s; z-index: 21;
+        }
+        .intersection-point.active {
+            border-color: #10b981; background: rgba(16, 185, 129, 0.3);
+            transform: translate(-50%, -50%) scale(1.3);
+        }
+
+        /* HORIZONTE NIVEL 2 */
+        .sky-section { position: absolute; top: 0; left: 0; width: 100%; background: linear-gradient(to bottom, #38bdf8, #bae6fd); }
+        .ground-section { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to bottom, #166534, #14532d); }
+        
+        .horizon-drag-line {
+            position: absolute; left: 0; right: 0; height: 50px;
+            transform: translateY(-50%); cursor: ns-resize; z-index: 40;
+            background-color: rgba(255, 255, 255, 0.001); /* Hitbox ancho */
+            touch-action: none;
+        }
+        .horizon-drag-line::before {
+            content: ''; position: absolute; top: 50%; left: 0; right: 0;
+            height: 4px; background: rgba(255, 255, 255, 0.6); transform: translateY(-50%);
+            pointer-events: none; transition: height 0.2s, background 0.2s;
+        }
+        .horizon-drag-line.dragging::before, .horizon-drag-line:hover::before {
+            height: 8px; background: white; box-shadow: 0 0 10px rgba(255,255,255,0.8);
+        }
+
+        /* PALETA (DOCK) */
+        .dock {
+            display: flex; gap: 1rem; justify-content: center;
+            background: rgba(30, 41, 59, 0.9); padding: 1rem;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        .dock-item {
+            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; padding: 10px; cursor: pointer; transition: transform 0.1s;
+        }
+        .dock-item:active { transform: scale(0.9); }
+
+        /* MODAL */
+        .modal { display: none; }
+        .modal.active { display: flex; animation: fadeIn 0.3s forwards; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <!-- SVGs Ocultos para reciclar -->
+    <svg style="display: none;">
+        <symbol id="icon-plane" viewBox="0 0 200 120">
+            <!-- Sombra -->
+            <ellipse cx="100" cy="110" rx="60" ry="10" fill="rgba(0,0,0,0.3)"/>
+            <!-- Cuerpo -->
+            <path d="M40,75 C40,70 160,70 160,75 C165,78 160,82 100,82 C40,82 35,78 40,75 Z" fill="#b45309"/>
+            <path d="M100,65 L100,75 L180,65 L185,55 Z" fill="#991b1b"/>
+            <!-- Alas sup -->
+            <path d="M50,55 C40,55 30,60 30,70 C30,80 110,80 120,70 C130,60 120,55 50,55 Z" fill="#dc2626"/>
+            <!-- Piloto -->
+            <circle cx="100" cy="50" r="8" fill="#d97706"/>
+            <!-- Estructura -->
+            <line x1="50" y1="45" x2="50" y2="75" stroke="#94a3b8" stroke-width="4"/>
+            <line x1="140" y1="45" x2="140" y2="75" stroke="#94a3b8" stroke-width="4"/>
+            <!-- Ala Inf -->
+            <path d="M30,45 C30,40 170,40 170,45 C175,48 170,52 100,52 C30,52 25,48 30,45 Z" fill="#f59e0b"/>
+            <!-- Hélice -->
+            <ellipse cx="20" cy="68" rx="6" ry="35" fill="rgba(255,255,255,0.6)"/>
+            <circle cx="20" cy="68" r="4" fill="#1e293b"/>
+        </symbol>
+        <symbol id="icon-cloud" viewBox="0 0 120 70">
+            <path d="M25,60 C10,60 5,45 15,35 C15,20 35,15 45,25 C55,5 85,5 95,25 C110,25 115,40 105,50 C115,60 95,65 85,60 Z" fill="#ffffff"/>
+        </symbol>
+        <symbol id="icon-balloon" viewBox="0 0 100 140">
+            <path d="M50,10 C20,10 10,40 20,70 C30,100 40,110 50,110 C60,110 70,100 80,70 C90,40 80,10 50,10 Z" fill="#ef4444"/>
+            <rect x="40" y="120" width="20" height="15" rx="2" fill="#8b4513"/>
+            <line x1="42" y1="110" x2="42" y2="120" stroke="#333" stroke-width="2"/>
+            <line x1="58" y1="110" x2="58" y2="120" stroke="#333" stroke-width="2"/>
+        </symbol>
+    </svg>
+
+    <div class="max-w-4xl mx-auto w-full flex-grow flex flex-col gap-4">
+        
+        <!-- Header / Stats -->
+        <div class="bg-slate-800 rounded-2xl p-4 flex justify-between items-center shadow-lg border border-slate-700">
+            <div>
+                <span class="text-emerald-400 font-bold text-xs uppercase tracking-widest block mb-1">Nivel Actual</span>
+                <h1 id="level-title" class="text-xl md:text-2xl font-black text-white">1. Regla de los Tercios</h1>
+            </div>
+            <button id="btn-evaluate" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-transform active:scale-95">
+                Evaluar <i class="fas fa-check ml-1"></i>
+            </button>
+        </div>
+
+        <!-- Instrucciones -->
+        <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-slate-300 text-sm md:text-base">
+            <p id="level-instruction">Cargando instrucciones...</p>
+            
+            <!-- Medidor de balance (Oculto por defecto) -->
+            <div id="balance-meter" class="hidden mt-4 pt-4 border-t border-slate-700">
+                <div class="flex justify-between text-xs text-slate-400 mb-1">
+                    <span>Izquierda</span><span class="text-emerald-400 font-bold">Centro</span><span>Derecha</span>
+                </div>
+                <div class="w-full h-4 bg-slate-900 rounded-full relative overflow-hidden border border-slate-600">
+                    <div class="absolute inset-y-0 left-[45%] right-[45%] bg-emerald-500/30"></div>
+                    <div class="absolute inset-y-0 left-[50%] w-0.5 bg-white z-10 -ml-[1px]"></div>
+                    <div id="balance-indicator" class="absolute top-0 bottom-0 w-4 bg-white rounded-full shadow-lg z-20 transition-all duration-100 -ml-2" style="left: 50%;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contenedor del Tablero de Juego -->
+        <div class="relative w-full flex-grow rounded-2xl overflow-hidden border-2 border-slate-700 shadow-2xl">
+            <div id="game-board" class="game-board">
+                <!-- Los elementos se inyectan aquí por JS -->
+            </div>
+        </div>
+
+        <!-- Paleta Inferior (Oculta por defecto) -->
+        <div id="dock" class="dock hidden rounded-2xl">
+            <div class="dock-item flex flex-col items-center gap-1" data-spawn="cloud">
+                <svg class="w-12 h-8"><use href="#icon-cloud"></use></svg>
+                <span class="text-[10px] text-slate-400">Nube</span>
+            </div>
+            <div class="dock-item flex flex-col items-center gap-1" data-spawn="balloon">
+                <svg class="w-8 h-10"><use href="#icon-balloon"></use></svg>
+                <span class="text-[10px] text-slate-400">Globo</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Feedback -->
+    <div id="modal" class="modal fixed inset-0 z-50 bg-black/80 backdrop-blur-sm items-center justify-center p-4">
+        <div class="bg-slate-800 p-8 rounded-3xl max-w-sm w-full text-center border border-slate-700 shadow-2xl">
+            <div id="modal-icon" class="w-20 h-20 mx-auto rounded-full flex items-center justify-center text-4xl mb-4 border-4">
+                <i class="fas fa-star"></i>
+            </div>
+            <h2 id="modal-title" class="text-2xl font-black text-white mb-2">¡Título!</h2>
+            <p id="modal-desc" class="text-slate-300 mb-6">Descripción del resultado.</p>
+            <button id="modal-btn" class="w-full font-bold py-3 px-6 rounded-xl text-white transition-transform active:scale-95">
+                Continuar
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // =========================================================
+        // ESTADO GLOBAL
+        // =========================================================
+        let currentLevelIndex = 0;
+        const board = document.getElementById('game-board');
+        
+        // Variables críticas para el arrastre
+        let activeDragObj = null; 
+        let offsetX = 0; 
+        let offsetY = 0;
+        let isHorizonDrag = false;
+
+        // Variables de lógica de juego
+        let currentHorizonPercent = 50;
+        let gameElements = []; // {el: HTMLElement, weight: Number}
+
+        // =========================================================
+        // MOTOR DE ARRASTRE (MOUSE Y TOUCH UNIFICADO EN DOCUMENT)
+        // =========================================================
+
+        function getEventCoords(e) {
+            // Maneja tanto eventos de mouse como táctiles
+            if (e.touches && e.touches.length > 0) {
+                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.changedTouches && e.changedTouches.length > 0) {
+                return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+            }
+            return { x: e.clientX, y: e.clientY };
+        }
+
+        function handleDragStart(e) {
+            // Buscar si lo que tocamos es arrastrable
+            const target = e.target.closest('.draggable') || e.target.closest('.horizon-drag-line');
+            if (!target) return;
+
+            // Prevenir scroll en móviles al tocar elementos arrastrables
+            if(e.cancelable) e.preventDefault();
+
+            activeDragObj = target;
+            activeDragObj.classList.add('dragging');
+            
+            const coords = getEventCoords(e);
+            const rect = activeDragObj.getBoundingClientRect();
+
+            // Guardar en qué parte exacta del objeto se hizo clic
+            offsetX = coords.x - rect.left;
+            offsetY = coords.y - rect.top;
+
+            isHorizonDrag = activeDragObj.classList.contains('horizon-drag-line');
+        }
+
+        function handleDragMove(e) {
+            if (!activeDragObj) return;
+            
+            if(e.cancelable) e.preventDefault(); // Detiene absolutamente cualquier scroll/zoom
+
+            const coords = getEventCoords(e);
+            const boardRect = board.getBoundingClientRect();
+
+            if (isHorizonDrag) {
+                // Lógica especial: Arrastrar solo en Y (Horizonte)
+                let newY = coords.y - boardRect.top;
+                let percent = (newY / boardRect.height) * 100;
+                
+                // Limitar entre 15% y 85%
+                if (percent < 15) percent = 15;
+                if (percent > 85) percent = 85;
+
+                currentHorizonPercent = percent;
+                
+                activeDragObj.style.top = `${percent}%`;
+                document.getElementById('sky-bg').style.height = `${percent}%`;
+                document.getElementById('ground-bg').style.height = `${100 - percent}%`;
+
+            } else {
+                // Lógica normal: Arrastrar libremente X e Y
+                let newX = coords.x - boardRect.left - offsetX;
+                let newY = coords.y - boardRect.top - offsetY;
+
+                // Limitar al tablero
+                const maxX = boardRect.width - activeDragObj.offsetWidth;
+                const maxY = boardRect.height - activeDragObj.offsetHeight;
+                
+                if (newX < 0) newX = 0;
+                if (newY < 0) newY = 0;
+                if (newX > maxX) newX = maxX;
+                if (newY > maxY) newY = maxY;
+
+                activeDragObj.style.left = `${newX}px`;
+                activeDragObj.style.top = `${newY}px`;
+
+                // Disparar validaciones en tiempo real
+                if (currentLevelIndex === 0) checkGridIntersections(activeDragObj);
+                if (currentLevelIndex === 2) calculateBalance();
+            }
+        }
+
+        function handleDragEnd() {
+            if (activeDragObj) {
+                activeDragObj.classList.remove('dragging');
+                activeDragObj = null;
+                isHorizonDrag = false;
+            }
+        }
+
+        // ASIGNACIÓN DE EVENTOS AL DOCUMENTO (A prueba de balas)
+        // Esto evita que perdamos el "foco" si el usuario mueve el dedo muy rápido
+        board.addEventListener('mousedown', handleDragStart);
+        board.addEventListener('touchstart', handleDragStart, { passive: false });
+
+        document.addEventListener('mousemove', handleDragMove);
+        document.addEventListener('touchmove', handleDragMove, { passive: false });
+
+        document.addEventListener('mouseup', handleDragEnd);
+        document.addEventListener('touchend', handleDragEnd);
+
+
+        // =========================================================
+        // SISTEMA DE NIVELES
+        // =========================================================
+
+        const levels = [
+            {
+                title: "1. La Regla de los Tercios",
+                instruction: "Toca y arrastra el avión para sacarlo del centro. Colócalo sobre una de las 4 intersecciones para crear un encuadre dinámico.",
+                init: initLevel1,
+                evaluate: evalLevel1
+            },
+            {
+                title: "2. Tensión del Horizonte",
+                instruction: "Arrastra la línea central hacia arriba o hacia abajo. Nunca dejes el horizonte exactamente en el centro (50%).",
+                init: initLevel2,
+                evaluate: evalLevel2
+            },
+            {
+                title: "3. Equilibrio Visual",
+                instruction: "El avión grande pesa mucho a la izquierda. Toca elementos en la paleta inferior para crearlos, y arrástralos para equilibrar la barra.",
+                init: initLevel3,
+                evaluate: evalLevel3
+            }
+        ];
+
+        function loadCurrentLevel() {
+            if (currentLevelIndex >= levels.length) {
+                showVictory();
+                return;
+            }
+
+            const level = levels[currentLevelIndex];
+            
+            // Limpiar UI
+            board.innerHTML = '';
+            gameElements = [];
+            document.getElementById('level-title').innerText = level.title;
+            document.getElementById('level-instruction').innerText = level.instruction;
+            document.getElementById('dock').classList.add('hidden');
+            document.getElementById('balance-meter').classList.add('hidden');
+
+            // Iniciar configuración del nivel
+            level.init();
+        }
+
+        // --- NIVEL 1: TERCIOS ---
+        function initLevel1() {
+            // Fondo fotográfico
+            board.style.background = "url('https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1200&q=80') center/cover";
+            
+            // Cuadrícula
+            const grid = document.createElement('div');
+            grid.className = 'thirds-grid';
+            for(let i=0; i<9; i++) grid.appendChild(document.createElement('div'));
+            board.appendChild(grid);
+
+            // Puntos de intersección
+            setTimeout(() => {
+                const bw = board.offsetWidth;
+                const bh = board.offsetHeight;
+                const coords = [
+                    {x: bw/3, y: bh/3}, {x: (bw/3)*2, y: bh/3},
+                    {x: bw/3, y: (bh/3)*2}, {x: (bw/3)*2, y: (bh/3)*2}
+                ];
+                coords.forEach((c, index) => {
+                    const pt = document.createElement('div');
+                    pt.className = 'intersection-point';
+                    pt.id = `point-${index}`;
+                    pt.style.left = `${c.x}px`; pt.style.top = `${c.y}px`;
+                    board.appendChild(pt);
+                });
+            }, 50); // Pequeño delay para asegurar que el DOM pintó el tamaño
+
+            // Crear Avión
+            const plane = document.createElement('div');
+            plane.className = 'draggable';
+            plane.id = 'the-plane';
+            plane.style.width = '180px'; plane.style.height = '110px';
+            plane.innerHTML = `<svg><use href="#icon-plane"></use></svg>`;
+            
+            board.appendChild(plane);
+
+            // Centrarlo inicialmente
+            setTimeout(() => {
+                plane.style.left = `${(board.offsetWidth / 2) - 90}px`;
+                plane.style.top = `${(board.offsetHeight / 2) - 55}px`;
+            }, 60);
+        }
+
+        function checkGridIntersections(plane) {
+            const planeRect = plane.getBoundingClientRect();
+            const boardRect = board.getBoundingClientRect();
+            
+            // Centro del avión relativo al tablero
+            const cx = (planeRect.left - boardRect.left) + (planeRect.width / 2);
+            const cy = (planeRect.top - boardRect.top) + (planeRect.height / 2);
+
+            const tolerance = 70; // Píxeles de tolerancia
+
+            document.querySelectorAll('.intersection-point').forEach(pt => {
+                const ptX = parseFloat(pt.style.left);
+                const ptY = parseFloat(pt.style.top);
+                const dist = Math.hypot(cx - ptX, cy - ptY);
+                
+                if (dist < tolerance) pt.classList.add('active');
+                else pt.classList.remove('active');
+            });
+        }
+
+        function evalLevel1() {
+            const activePoints = document.querySelectorAll('.intersection-point.active');
+            if (activePoints.length > 0) {
+                openModal(true, "¡Excelente!", "Has situado el elemento en un punto fuerte, haciendo la imagen mucho más interesante.");
+            } else {
+                openModal(false, "Sigue Intentando", "Arrastra el avión y colócalo cerca de una de las 4 intersecciones hasta que se ilumine en verde.");
+            }
+        }
+
+        // --- NIVEL 2: HORIZONTE ---
+        function initLevel2() {
+            board.style.background = "none";
+            currentHorizonPercent = 50;
+
+            const sky = document.createElement('div');
+            sky.id = 'sky-bg'; sky.className = 'sky-section'; sky.style.height = '50%';
+            
+            const ground = document.createElement('div');
+            ground.id = 'ground-bg'; ground.className = 'ground-section'; ground.style.height = '50%';
+
+            const dragLine = document.createElement('div');
+            dragLine.className = 'horizon-drag-line'; dragLine.style.top = '50%';
+
+            board.appendChild(sky);
+            board.appendChild(ground);
+            board.appendChild(dragLine);
+
+            // Guías de tercios difuminadas
+            const grid = document.createElement('div');
+            grid.className = 'thirds-grid opacity-30';
+            for(let i=0; i<9; i++) grid.appendChild(document.createElement('div'));
+            board.appendChild(grid);
+        }
+
+        function evalLevel2() {
+            if (currentHorizonPercent > 40 && currentHorizonPercent < 60) {
+                openModal(false, "Demasiado simétrico", "La línea sigue muy cerca del medio. Rompe la simetría arrastrándola decididamente arriba o abajo.");
+            } else {
+                openModal(true, "Buena Tensión", "Al mover el horizonte le das protagonismo al cielo o a la tierra, creando una narrativa más fuerte.");
+            }
+        }
+
+        // --- NIVEL 3: EQUILIBRIO ---
+        function initLevel3() {
+            board.style.background = "linear-gradient(to bottom, #f59e0b, #ea580c)";
+            document.getElementById('balance-meter').classList.remove('hidden');
+            document.getElementById('dock').classList.remove('hidden');
+
+            // Avión Gigante
+            const bigPlane = document.createElement('div');
+            bigPlane.className = 'draggable';
+            bigPlane.style.width = '240px'; bigPlane.style.height = '140px';
+            bigPlane.innerHTML = `<svg><use href="#icon-plane"></use></svg>`;
+            board.appendChild(bigPlane);
+
+            setTimeout(() => {
+                bigPlane.style.left = '20px'; // Forzado a la izquierda
+                bigPlane.style.top = '50px';
+            }, 50);
+
+            gameElements.push({ el: bigPlane, weight: 10 });
+            calculateBalance();
+        }
+
+        // Sistema para añadir elementos desde la paleta (Dock)
+        document.querySelectorAll('.dock-item').forEach(item => {
+            item.addEventListener('click', () => {
+                if (currentLevelIndex !== 2) return; // Solo en Nivel 3
+
+                const type = item.getAttribute('data-spawn');
+                let w, h, weight;
+                if (type === 'cloud') { w = 120; h = 70; weight = 2; }
+                if (type === 'balloon') { w = 80; h = 110; weight = 4; }
+
+                const el = document.createElement('div');
+                el.className = 'draggable';
+                el.style.width = `${w}px`; el.style.height = `${h}px`;
+                el.innerHTML = `<svg><use href="#icon-${type}"></use></svg>`;
+                
+                // Spawnear en el centro derecho para ayudar
+                el.style.left = `${(board.offsetWidth / 2)}px`;
+                el.style.top = `${(board.offsetHeight / 2) - (h/2)}px`;
+                
+                board.appendChild(el);
+                gameElements.push({ el: el, weight: weight });
+                
+                // Animación de aparición
+                el.style.transform = 'scale(0)';
+                setTimeout(() => el.style.transform = 'scale(1)', 10);
+                
+                calculateBalance();
+            });
+        });
+
+        function calculateBalance() {
+            if (gameElements.length === 0) return;
+            const bw = board.offsetWidth;
+            
+            let totalWeight = 0;
+            let weightedSum = 0;
+
+            gameElements.forEach(item => {
+                const rect = item.el.getBoundingClientRect();
+                const bRect = board.getBoundingClientRect();
+                // Centro x del elemento
+                const cx = (rect.left - bRect.left) + (rect.width / 2);
+                
+                // Porcentaje en el tablero (0 a 100)
+                const percentX = (cx / bw) * 100;
+                
+                weightedSum += (percentX * item.weight);
+                totalWeight += item.weight;
+            });
+
+            const centerOfMass = weightedSum / totalWeight;
+            const indicator = document.getElementById('balance-indicator');
+            
+            indicator.style.left = `${centerOfMass}%`;
+
+            if (centerOfMass >= 45 && centerOfMass <= 55) {
+                indicator.style.backgroundColor = '#10b981'; // Verde
+            } else {
+                indicator.style.backgroundColor = '#ef4444'; // Rojo
+            }
+            
+            return centerOfMass;
+        }
+
+        function evalLevel3() {
+            const mass = calculateBalance();
+            if (mass >= 45 && mass <= 55) {
+                openModal(true, "Composición Balanceada", "Usaste correctamente el peso visual de los elementos pequeños a la derecha para equilibrar el avión gigante.");
+            } else {
+                openModal(false, "Desequilibrado", "La composición se inclina demasiado hacia un lado. Crea elementos tocando los botones abajo, y arrástralos al lado contrario para hacer contrapeso.");
+            }
+        }
+
+
+        // =========================================================
+        // UI GENERAL Y MODALES
+        // =========================================================
+
+        document.getElementById('btn-evaluate').addEventListener('click', () => {
+            levels[currentLevelIndex].evaluate();
+        });
+
+        document.getElementById('modal-btn').addEventListener('click', () => {
+            document.getElementById('modal').classList.remove('active');
+            // Si el modal era de éxito, avanzar nivel
+            if (document.getElementById('modal-btn').getAttribute('data-success') === 'true') {
+                currentLevelIndex++;
+                loadCurrentLevel();
+            }
+        });
+
+        function openModal(success, title, desc) {
+            const modal = document.getElementById('modal');
+            const iconWrap = document.getElementById('modal-icon');
+            const icon = iconWrap.querySelector('i');
+            const btn = document.getElementById('modal-btn');
+
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-desc').innerText = desc;
+            
+            btn.setAttribute('data-success', success ? 'true' : 'false');
+
+            if (success) {
+                iconWrap.className = "w-20 h-20 mx-auto rounded-full flex items-center justify-center text-4xl mb-4 border-4 border-emerald-500 bg-emerald-500/20 text-emerald-400";
+                icon.className = "fas fa-check";
+                btn.className = "w-full font-bold py-3 px-6 rounded-xl text-white transition-transform active:scale-95 bg-emerald-600 hover:bg-emerald-500";
+                btn.innerText = "Siguiente Reto";
+            } else {
+                iconWrap.className = "w-20 h-20 mx-auto rounded-full flex items-center justify-center text-4xl mb-4 border-4 border-rose-500 bg-rose-500/20 text-rose-400";
+                icon.className = "fas fa-xmark";
+                btn.className = "w-full font-bold py-3 px-6 rounded-xl text-white transition-transform active:scale-95 bg-slate-600 hover:bg-slate-500";
+                btn.innerText = "Intentar de nuevo";
+            }
+
+            modal.classList.add('active');
+        }
+
+        function showVictory() {
+            board.innerHTML = `
+                <div class="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                    <i class="fas fa-crown text-6xl text-yellow-400 mb-4 drop-shadow-[0_0_15px_rgba(250,204,21,0.6)]"></i>
+                    <h2 class="text-3xl font-black text-white mb-2">¡Composición Maestra!</h2>
+                    <p class="text-slate-300">Has dominado los principios de tercios, horizonte y peso visual.</p>
+                </div>
+            `;
+            document.getElementById('btn-evaluate').classList.add('hidden');
+            document.getElementById('level-title').innerText = "¡Felicidades!";
+            document.getElementById('level-instruction').innerText = "Curso completado.";
+        }
+
+        // INICIAR EL JUEGO
+        window.onload = () => {
+            loadCurrentLevel();
+        };
+
+    </script>
+</body>
+</html>
